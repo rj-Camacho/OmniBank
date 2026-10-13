@@ -1,0 +1,51 @@
+-- ------------------------------------------------------------------------------
+-- 1. Consultas de Control de Cardinalidad
+-- Objetivo: Verificar la población base de cuentas activas y eventos DEPOSIT.
+-- ------------------------------------------------------------------------------
+-- Control A: Total de cuentas activas (Esperado: 4)
+SELECT COUNT(*) AS total_cuentas_activas 
+FROM core.accounts 
+WHERE is_active = TRUE;
+
+-- Control B: Total de depósitos en el historial (Esperado: 1, perteneciente a ACCT-3001)
+SELECT COUNT(*) AS total_depositos 
+FROM core.transactions 
+WHERE tx_type = 'DEPOSIT';
+
+
+-- ------------------------------------------------------------------------------
+-- 2. Cuentas activas sin registrar depósitos (Anti JOIN sobre tipo de evento)
+-- Grano: 1 fila por cuenta activa que no posee eventos 'DEPOSIT'.
+-- ------------------------------------------------------------------------------
+SELECT 
+    a.account_number,
+    a.account_type,
+    c.first_name || ' ' || c.last_name AS titular
+FROM core.accounts a
+INNER JOIN core.customers c 
+    ON a.customer_id = c.customer_id
+WHERE a.is_active = TRUE
+  AND NOT EXISTS (
+      SELECT 1 
+      FROM core.transactions t 
+      WHERE t.account_id = a.account_id 
+        AND t.tx_type = 'DEPOSIT'
+  )
+ORDER BY a.account_number;
+
+
+-- ------------------------------------------------------------------------------
+-- 3. Cuentas activas con CUALQUIER movimiento (Para contraste de solapamiento)
+-- Grano: 1 fila por cuenta activa que tiene al menos un evento registrado.
+-- ------------------------------------------------------------------------------
+SELECT 
+    a.account_number,
+    'Posee historial de movimientos' AS estado_operativo
+FROM core.accounts a
+WHERE a.is_active = TRUE
+  AND EXISTS (
+      SELECT 1 
+      FROM core.transactions t 
+      WHERE t.account_id = a.account_id
+  )
+ORDER BY a.account_number;
