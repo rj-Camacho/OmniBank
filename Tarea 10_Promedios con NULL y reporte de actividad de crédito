@@ -1,41 +1,14 @@
--- ------------------------------------------------------------------------------
--- 1. Comportamiento de AVG frente a valores NULL (Demostración del denominador)
--- Grano: 1 fila de totales resumiendo la muestra temporal construida.
--- ------------------------------------------------------------------------------
-WITH muestra_nula AS (
-    SELECT 10000.00 AS val UNION ALL
-    SELECT 0.00 UNION ALL
-    SELECT 0.00 UNION ALL
-    SELECT NULL
-)
-SELECT 
-    AVG(val) AS avg_ignora_null_denom_3,
-    AVG(COALESCE(val, 0)) AS avg_con_cero_denom_4
-FROM muestra_nula;
+WITH sample(x) AS (VALUES (NULL::numeric),(10000::numeric),(0::numeric),(0::numeric))
+SELECT ROUND(AVG(x),2) AS ignores_null,
+       ROUND(AVG(COALESCE(x,0)),2) AS treats_null_as_zero
+FROM sample;
 
-
--- ------------------------------------------------------------------------------
--- 2. Reporte de Actividad de Crédito Activa
--- Grano: 1 fila por cuenta de crédito activa (account_number).
--- Filtro de nivel de fila (WHERE): Aplica sobre el tipo de cuenta y su estado
--- antes de realizar cualquier agrupación de movimientos.
--- Filtro agregado (HAVING): Retiene a quienes no tienen eventos (COUNT = 0) o 
--- a quienes superan el umbral de volumen bruto (SUM >= 300).
--- ------------------------------------------------------------------------------
-SELECT 
-    a.account_number,
-    a.balance AS saldo_almacenado,
-    COUNT(t.transaction_id) AS numero_movimientos,
-    COALESCE(SUM(t.amount), 0) AS volumen_bruto_registrado
-FROM core.accounts a
-LEFT JOIN core.transactions t 
-    ON a.account_id = t.account_id
-WHERE a.account_type = 'CREDIT' 
-  AND a.is_active = TRUE
-GROUP BY 
-    a.account_number,
-    a.balance
-HAVING COUNT(t.transaction_id) = 0 
-    OR SUM(t.amount) >= 300
-ORDER BY 
-    a.account_number;
+SELECT c.email,a.account_number,a.balance AS stored_balance,
+       COUNT(t.transaction_id) AS movement_count,
+       COALESCE(SUM(t.amount),0) AS recorded_gross_volume
+FROM core.customers c JOIN core.accounts a USING (customer_id)
+LEFT JOIN core.transactions t USING (account_id)
+WHERE a.account_type='CREDIT' AND a.is_active
+GROUP BY c.customer_id,c.email,a.account_id,a.account_number,a.balance
+HAVING COALESCE(SUM(t.amount),0)>=300 OR COUNT(t.transaction_id)=0
+ORDER BY recorded_gross_volume DESC;
