@@ -1,0 +1,56 @@
+-- ------------------------------------------------------------------------------
+-- 1. Self JOIN Temporal (Comportamiento de cuentas en ventanas cortas)
+-- Grano: 1 fila por cada "pareja de eventos" en la misma cuenta separados por 
+-- un máximo de 48 horas.
+-- ------------------------------------------------------------------------------
+SELECT 
+    t1.account_id,
+    t1.transaction_id AS evento_inicial_id,
+    t1.tx_type AS evento_inicial_tipo,
+    t1.tx_timestamp AS evento_inicial_tiempo,
+    t2.transaction_id AS evento_subsecuente_id,
+    t2.tx_type AS evento_subsecuente_tipo,
+    t2.tx_timestamp AS evento_subsecuente_tiempo,
+    (t2.tx_timestamp - t1.tx_timestamp) AS tiempo_transcurrido
+FROM core.transactions t1
+INNER JOIN core.transactions t2 
+    ON t1.account_id = t2.account_id
+    -- La desigualdad estricta (<) cumple doble propósito: 
+    -- 1. Evita emparejar un evento consigo mismo (t1 = t2).
+    -- 2. Fuerza un orden cronológico, evitando el par inverso (A->B y B->A).
+    AND t1.tx_timestamp < t2.tx_timestamp
+WHERE (t2.tx_timestamp - t1.tx_timestamp) <= INTERVAL '48 hours';
+
+
+-- ------------------------------------------------------------------------------
+-- 2 y 3. Matriz de Productos y Anti JOIN (Combinaciones Faltantes)
+-- Grano: 1 fila por cada combinación teórica (Cliente + Tipo de Cuenta) 
+-- que actualmente NO existe en la tabla de cuentas registradas.
+-- ------------------------------------------------------------------------------
+WITH valores_enum AS (
+    -- Extracción de los valores reales del ENUM core.tipo_cuenta
+    SELECT unnest(enum_range(NULL::core.tipo_cuenta)) AS tipo_cuenta_posible
+),
+matriz_teorica AS (
+    -- CROSS JOIN para multiplicar 4 clientes x 3 tipos = 12 posibilidades
+    SELECT 
+        c.customer_id,
+        c.email,
+        c.first_name,
+        v.tipo_cuenta_posible
+    FROM core.customers c
+    CROSS JOIN valores_enum v
+)
+-- Anti JOIN (NOT EXISTS) para restar la realidad a la teoría
+SELECT 
+    mt.email AS titular,
+    mt.tipo_cuenta_posible AS producto_faltante,
+    'Combinación no registrada' AS estado
+FROM matriz_teorica mt
+WHERE NOT EXISTS (
+    SELECT 1 
+    FROM core.accounts a 
+    WHERE a.customer_id = mt.customer_id 
+      AND a.account_type = mt.tipo_cuenta_posible
+)
+ORDER BY mt.email, mt.tipo_cuenta_posible;
