@@ -1,0 +1,70 @@
+-- ------------------------------------------------------------------------------
+-- 1. Punto de control de la semilla
+-- Objetivo: Verificar la población base (esperado: 4 clientes, 5 cuentas, 4 txs)
+-- ------------------------------------------------------------------------------
+SELECT 'core.customers' AS tabla, COUNT(*) AS recuento FROM core.customers
+UNION ALL
+SELECT 'core.accounts', COUNT(*) FROM core.accounts
+UNION ALL
+SELECT 'core.transactions', COUNT(*) FROM core.transactions;
+
+
+-- ------------------------------------------------------------------------------
+-- 2. Recorrido de cada movimiento (INNER JOIN encadenado)
+-- Grano: 1 fila por cada movimiento financiero (evento).
+-- Justificación: Partimos de la tabla transactions (la tabla de hechos). Al hacer 
+-- INNER JOIN hacia cuentas y titulares (tablas dimensionales padre), enriquecemos 
+-- la fila del evento con atributos de sus dueños, sin multiplicar el resultado.
+-- ------------------------------------------------------------------------------
+SELECT 
+    t.transaction_id,
+    c.first_name,
+    c.last_name,
+    a.account_number,
+    t.transaction_type AS tx_type,
+    t.amount
+FROM core.transactions t
+INNER JOIN core.accounts a 
+    ON t.account_id = a.account_id
+INNER JOIN core.customers c 
+    ON a.customer_id = c.customer_id
+ORDER BY 
+    t.created_at ASC, 
+    t.transaction_id ASC;
+
+
+-- ------------------------------------------------------------------------------
+-- 3. Cuentas sin movimientos (LEFT JOIN + IS NULL)
+-- Grano: 1 fila por cada cuenta bancaria que carece de historial operativo.
+-- ------------------------------------------------------------------------------
+SELECT 
+    a.account_number,
+    a.is_active,
+    CASE 
+        WHEN a.is_active = FALSE THEN 'Cuenta Desactivada (Ignorar para adopción)'
+        ELSE 'Cuenta Activa (Target para primera transacción)'
+    END AS estado_operativo
+FROM core.accounts a
+LEFT JOIN core.transactions t 
+    ON a.account_id = t.account_id
+WHERE t.transaction_id IS NULL;
+
+
+-- ------------------------------------------------------------------------------
+-- 4. Titulares con cuenta elegible, si existe (LEFT JOIN con filtro en ON)
+-- Grano: 1 fila base por cada titular, con información adjunta si cumple la regla.
+-- 
+-- Análisis del predicado: 
+-- Colocar "a.balance > 0" en el ON asegura que el LEFT JOIN intente emparejar 
+-- solo cuentas con fondos, pero si falla, se preserva el titular con columnas NULL.
+-- Si lo moviéramos al WHERE, evaluar "NULL > 0" daría FALSE, convirtiendo la  
+-- consulta implícitamente en un INNER JOIN, eliminando a Alice y Humberto.
+-- ------------------------------------------------------------------------------
+SELECT 
+    c.email,
+    a.account_number,
+    a.balance
+FROM core.customers c
+LEFT JOIN core.accounts a 
+    ON c.customer_id = a.customer_id 
+    AND a.balance > 0;
