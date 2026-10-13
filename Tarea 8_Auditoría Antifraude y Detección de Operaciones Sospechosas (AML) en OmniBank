@@ -1,0 +1,26 @@
+SELECT 
+    transaction_id,
+    amount,
+    transaction_type AS tx_type,
+    created_at AS tx_timestamp,
+    COALESCE(description, 'EXCLUSIÓN OPORTUNAMENTE DETECTADA - SIN MOTIVO DE PAGO') AS descripcion_monitoreada
+FROM core.transactions
+WHERE 
+    -- BLOQUE 1: Movimiento Patrimonial Atípico (>= $10,000 en retiros/transferencias)
+    (amount >= 10000.00 AND transaction_type IN ('TRANSFER', 'WITHDRAWAL'))
+    
+    OR 
+    
+    -- BLOQUE 2: Conceptos Opacos o de Alto Riesgo ("Red Flags")
+    (
+        description ILIKE '%crypto%' OR 
+        description ILIKE '%offshore%' OR 
+        description ILIKE '%shell%' OR 
+        description ILIKE '%casino%' OR 
+        
+        -- EXCEPCIÓN ANTIFRAUDE AVANZADA: 
+        -- NULLIF convierte strings vacíos ('') o de puros espacios (TRIM) en verdaderos NULL.
+        -- Exigimos que esta omisión de concepto NO ocurra en depósitos ordinarios.
+        (NULLIF(TRIM(description), '') IS NULL AND transaction_type != 'DEPOSIT')
+    )
+ORDER BY amount DESC;
