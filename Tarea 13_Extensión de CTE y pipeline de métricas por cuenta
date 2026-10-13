@@ -1,0 +1,47 @@
+-- ------------------------------------------------------------------------------
+-- 1. Consultas de Control Directas
+-- Objetivo: Establecer la verdad matemática base de 4 cuentas, volumen 800 y media 200.
+-- ------------------------------------------------------------------------------
+SELECT 
+    COUNT(*) AS total_cuentas_activas,
+    (SELECT SUM(amount) FROM core.transactions) AS volumen_total,
+    ((SELECT SUM(amount) FROM core.transactions) / COUNT(*)) AS promedio_esperado
+FROM core.accounts 
+WHERE is_active = TRUE;
+
+
+-- ------------------------------------------------------------------------------
+-- 2. Pipeline de Métricas por Moneda (CTEs)
+-- ------------------------------------------------------------------------------
+WITH tx_metrics AS (
+    -- ETAPA 1: Agregación aislada de eventos
+    -- Grano: 1 fila por cuenta que tenga al menos un movimiento.
+    SELECT 
+        account_id,
+        SUM(amount) AS volumen_bruto
+    FROM core.transactions
+    GROUP BY account_id
+),
+active_accounts_metrics AS (
+    -- ETAPA 2: Acoplamiento seguro de cuentas activas
+    -- Grano: 1 fila por cuenta activa.
+    -- Aquí entra el cero de presentación (COALESCE) para cuentas sin historial.
+    SELECT 
+        a.account_id,
+        a.currency,
+        COALESCE(tm.volumen_bruto, 0) AS volumen_bruto
+    FROM core.accounts a
+    LEFT JOIN tx_metrics tm 
+        ON a.account_id = tm.account_id
+    WHERE a.is_active = TRUE
+)
+-- ETAPA 3: Resumen Final por Moneda
+-- Grano: 1 fila por tipo de moneda.
+-- Aquí se calcula el promedio agrupado, utilizando las 4 filas de la CTE anterior.
+SELECT 
+    currency AS moneda,
+    COUNT(account_id) AS numero_cuentas,
+    SUM(volumen_bruto) AS volumen_bruto_total,
+    ROUND(AVG(volumen_bruto), 2) AS promedio_por_cuenta
+FROM active_accounts_metrics
+GROUP BY currency;
