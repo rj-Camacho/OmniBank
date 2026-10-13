@@ -1,0 +1,80 @@
+-- ------------------------------------------------------------------------------
+-- 1. Tablero de productos (Saldos almacenados por tipo de cuenta activa)
+-- Grano: 1 fila por tipo de cuenta (account_type).
+-- Origen: core.accounts (medida directa del saldo actual, no es suma de eventos).
+-- ------------------------------------------------------------------------------
+SELECT 
+    account_type,
+    COUNT(account_id) AS cantidad_cuentas,
+    SUM(balance) AS saldo_total_almacenado,
+    MIN(balance) AS saldo_minimo_almacenado,
+    MAX(balance) AS saldo_maximo_almacenado,
+    AVG(balance) AS saldo_promedio_almacenado
+FROM core.accounts
+WHERE is_active = TRUE
+GROUP BY account_type
+ORDER BY saldo_total_almacenado DESC, account_type;
+
+
+-- ------------------------------------------------------------------------------
+-- 1.1 Control de totales (Suma global de cuentas activas)
+-- Grano: 1 fila global (toda la tabla core.accounts filtrada).
+-- Validación esperada: 19950 de saldo total.
+-- ------------------------------------------------------------------------------
+SELECT 
+    COUNT(account_id) AS total_cuentas_activas,
+    SUM(balance) AS gran_total_saldo
+FROM core.accounts
+WHERE is_active = TRUE;
+
+
+-- ------------------------------------------------------------------------------
+-- 2. Segmentación de titulares con actividad registrada
+-- Grano: 1 fila por cliente.
+-- Origen: core.customers -> (LEFT) core.accounts -> (LEFT) core.transactions.
+-- 
+-- Nota sobre WHERE vs HAVING: 
+-- La cláusula WHERE filtra filas individuales *antes* de que ocurra la agrupación.
+-- No puede evaluar agregaciones porque `COUNT` o `SUM` aún no existen en esa fase. 
+-- HAVING se evalúa *después* del GROUP BY, permitiendo filtrar los grupos finales 
+-- basándonos en sus métricas resumidas (volumen > 100 o count >= 2).
+-- ------------------------------------------------------------------------------
+SELECT 
+    c.customer_id,
+    c.first_name,
+    c.last_name,
+    c.email,
+    COUNT(t.transaction_id) AS cantidad_movimientos,
+    COALESCE(SUM(t.amount), 0) AS volumen_bruto_registrado
+FROM core.customers c
+LEFT JOIN core.accounts a 
+    ON c.customer_id = a.customer_id
+LEFT JOIN core.transactions t 
+    ON a.account_id = t.account_id
+GROUP BY 
+    c.customer_id,
+    c.first_name,
+    c.last_name,
+    c.email
+HAVING 
+    COUNT(t.transaction_id) >= 2 
+    OR COALESCE(SUM(t.amount), 0) > 100
+ORDER BY 
+    volumen_bruto_registrado DESC, 
+    c.email ASC;
+
+
+-- ------------------------------------------------------------------------------
+-- 3. Control independiente de actividad
+-- Grano: 1 fila por cuenta con historial (account_id).
+-- Origen: core.transactions directamente.
+-- Objetivo: Comprobar que los volúmenes agregados del reporte 2 coincidan con la 
+-- suma real de los eventos en la tabla de transacciones, sin interferencia de JOINs.
+-- ------------------------------------------------------------------------------
+SELECT 
+    account_id,
+    COUNT(transaction_id) AS cantidad_movimientos,
+    SUM(amount) AS volumen_bruto_registrado
+FROM core.transactions
+GROUP BY account_id
+ORDER BY volumen_bruto_registrado DESC;
