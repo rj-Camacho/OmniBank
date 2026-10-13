@@ -1,63 +1,19 @@
--- ------------------------------------------------------------------------------
--- 1. Cuentas activas sin ningún movimiento
--- Grano: 1 fila por cuenta que cumpla ambas condiciones.
--- El filtro administrativo (is_active) se mantiene en la consulta principal, 
--- mientras que NOT EXISTS verifica la ausencia absoluta de eventos.
--- ------------------------------------------------------------------------------
-SELECT 
-    a.account_number
+SELECT a.account_number,a.account_type,a.balance
 FROM core.accounts a
-WHERE a.is_active = TRUE
+WHERE a.is_active
   AND NOT EXISTS (
-      SELECT 1 
-      FROM core.transactions t 
-      WHERE t.account_id = a.account_id
-  );
-
--- ------------------------------------------------------------------------------
--- 2. Cuentas (activas o inactivas) sin depósitos
--- Grano: 1 fila por cuenta que no tenga registrado un evento tipo 'DEPOSIT'.
--- ------------------------------------------------------------------------------
-SELECT 
-    a.account_number
-FROM core.accounts a
-WHERE NOT EXISTS (
-      SELECT 1 
-      FROM core.transactions t 
-      WHERE t.account_id = a.account_id 
-        AND t.tx_type = 'DEPOSIT'
+    SELECT 1 FROM core.transactions t WHERE t.account_id=a.account_id
   )
 ORDER BY a.account_number;
 
--- ------------------------------------------------------------------------------
--- 3. Muestra Diagnóstica Aislada: NOT IN frente a la Lógica Tri-Valuada (NULL)
--- Objetivo: Demostrar por qué NOT IN colapsa si la subconsulta devuelve un NULL.
--- ------------------------------------------------------------------------------
-WITH lista_buscada AS (
-    SELECT 1 AS valor_id
-),
-lista_exclusion_con_nulo AS (
-    SELECT 2 AS val UNION ALL
-    SELECT 3 UNION ALL
-    SELECT NULL -- El elemento tóxico que destruye la lógica de NOT IN
-)
-
--- Prueba A: NOT IN (Falla silenciosamente y devuelve 0 filas)
-SELECT 
-    valor_id, 
-    'Falla con NOT IN (Resultado UNKNOWN)' AS metodo_evaluacion
-FROM lista_buscada
-WHERE valor_id NOT IN (SELECT val FROM lista_exclusion_con_nulo)
-
-UNION ALL
-
--- Prueba B: NOT EXISTS (Triunfa y devuelve 1 fila)
-SELECT 
-    valor_id, 
-    'Funciona con NOT EXISTS (Resultado TRUE)' AS metodo_evaluacion
-FROM lista_buscada lb
+SELECT a.account_number,a.is_active
+FROM core.accounts a
 WHERE NOT EXISTS (
-    SELECT 1 
-    FROM lista_exclusion_con_nulo le 
-    WHERE le.val = lb.valor_id
-);
+  SELECT 1 FROM core.transactions t
+  WHERE t.account_id=a.account_id AND t.tx_type='DEPOSIT'
+)
+ORDER BY a.account_number;
+
+WITH valores(x) AS (VALUES (1),(NULL::integer))
+SELECT 2 NOT IN (SELECT x FROM valores) AS not_in_with_null,
+       NOT EXISTS (SELECT 1 FROM valores WHERE x=2) AS not_exists_result;
