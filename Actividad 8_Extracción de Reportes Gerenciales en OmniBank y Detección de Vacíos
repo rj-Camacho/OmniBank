@@ -1,46 +1,29 @@
+-- REPORTE 1: Extracción Quirúrgica de Cuentas Prioritarias en OmniBank
+-- Excluye celdas ruidosas (UUIDs, created_at, etc.) mediante proyección explícita
 SELECT 
-    account_number, 
-    account_type, 
+    account_number,
+    account_type,
     balance
 FROM core.accounts
 WHERE (balance >= 1000.00 OR account_type = 'SAVINGS')
 ORDER BY balance DESC
 LIMIT 2;
 
-
--- ------------------------------------------------------------------------------
--- REPORTE 2: Búsqueda Insensible por Patrones en Clientes
--- Utilizamos ILIKE para realizar una búsqueda de dominio de correo electrónico
--- que sea insensible a mayúsculas y minúsculas.
--- ------------------------------------------------------------------------------
+-- REPORTE 2: Búsqueda Insensible por Patrones en Clientes Bancarios
+-- Atrapa por igual '@email.com', '@EMAIL.COM' sin alterar el motor
 SELECT 
-    first_name, 
-    last_name, 
+    first_name,
+    last_name,
     email
 FROM core.customers
-WHERE email ILIKE '%@email.com%';
+WHERE email ILIKE '%@email.com';
 
-
--- ------------------------------------------------------------------------------
--- REPORTE 3: El Desmantelamiento del Fallo por Nulidad (Lógica Tri-Valuada)
--- 
--- DIAGNÓSTICO DEL ERROR DEL CONSULTOR:
--- En SQL opera la "Lógica Tri-Valuada" (Verdadero, Falso, Desconocido). 
--- Un valor NULL significa "Desconocido" o "Ausente". Si intentamos evaluar 
--- matemáticamente "description = NULL" o "to_account_id = NULL", el motor se  
--- pregunta: "¿Un valor desconocido es igual a otro valor desconocido?". 
--- La respuesta de PostgreSQL no es TRUE, sino NULL (Unknown). Por ello, el 
--- filtrado con "=" descarta la fila silenciosamente y devuelve 0 resultados. 
--- La forma correcta e innegociable de verificar ausencia es usar "IS NULL".
--- ------------------------------------------------------------------------------
+-- REPORTE 3: Resolución de la Lógica Tri-Valuada y Salvaguarda con COALESCE
+-- Corrige el fallo del analista interino (= NULL -> IS NULL) y purga vacíos
 SELECT 
-    transaction_id,
+    account_id,
     amount,
-    transaction_type,
-    -- Usamos COALESCE para atrapar el valor nulo e inyectar un texto elegante 
-    -- en la vista sin modificar la información real de la base de datos.
+    tx_type,
     COALESCE(description, 'COBRO INSTITUCIONAL O COMISIÓN - SIN RECEPTOR') AS descripcion_visible
 FROM core.transactions
--- Filtramos usando la sintaxis correcta IS NULL (abarcando la cuenta destino 
--- o la descripción para garantizar que se atrape la comisión bancaria).
-WHERE to_account_id IS NULL OR description IS NULL;
+WHERE description IS NULL AND tx_type = 'WITHDRAWAL';
