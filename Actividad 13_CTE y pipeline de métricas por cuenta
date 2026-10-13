@@ -1,63 +1,17 @@
--- ------------------------------------------------------------------------------
--- 1. Controles Directos de Validación
--- Objetivo: Confirmar 4 cuentas activas y un volumen bruto total de 800.
--- ------------------------------------------------------------------------------
-SELECT 'Cuentas Activas' AS metrica, COUNT(*) AS valor 
-FROM core.accounts 
-WHERE is_active = TRUE
-UNION ALL
-SELECT 'Volumen Bruto Total', SUM(amount) 
-FROM core.transactions;
-
-
--- ------------------------------------------------------------------------------
--- 2. Pipeline de Métricas (CTEs encadenadas)
--- ------------------------------------------------------------------------------
-WITH 
--- ETAPA 1: Agregación de transacciones
--- Grano: 1 fila por cuenta que tiene al menos un movimiento registrado.
--- Aisla el cálculo para evitar duplicaciones cartesianas posteriores.
-metricas_transaccionales AS (
-    SELECT 
-        account_id,
-        COUNT(transaction_id) AS cantidad_eventos,
-        SUM(amount) AS volumen_bruto
-    FROM core.transactions
-    GROUP BY account_id
-),
-
--- ETAPA 2: Acoplamiento a cuentas activas y resolución de nulos
--- Grano: 1 fila por cuenta activa existente en el catálogo.
--- Usa LEFT JOIN para mantener cuentas sin uso e inyecta ceros con COALESCE.
-cuentas_activas_consolidadas AS (
-    SELECT 
-        a.account_id,
-        a.account_number,
-        a.customer_id,
-        a.currency,
-        COALESCE(mt.cantidad_eventos, 0) AS cantidad_eventos,
-        COALESCE(mt.volumen_bruto, 0) AS volumen_bruto
-    FROM core.accounts a
-    LEFT JOIN metricas_transaccionales mt 
-        ON a.account_id = mt.account_id
-    WHERE a.is_active = TRUE
+WITH movement AS (
+ SELECT account_id, COUNT(*) AS tx_count, SUM(amount) AS gross_volume
+ FROM core.transactions GROUP BY account_id
+), account_metrics AS (
+ SELECT a.account_id, a.account_number, a.currency, a.customer_id,
+        COALESCE(m.tx_count,0) AS tx_count,
+        COALESCE(m.gross_volume,0) AS gross_volume
+ FROM core.accounts a LEFT JOIN movement m USING (account_id)
+ WHERE a.is_active
 )
-
--- ETAPA 3: Enriquecimiento con datos del titular y presentación (Main Query)
--- Grano: 1 fila por cuenta activa.
-SELECT 
-    c.first_name || ' ' || c.last_name AS titular_cuenta,
-    cac.account_number,
-    cac.currency,
-    cac.cantidad_eventos,
-    cac.volumen_bruto,
-    CASE 
-        WHEN cac.cantidad_eventos = 0 THEN 'Inactiva (Sin uso)'
-        WHEN cac.cantidad_eventos = 1 THEN 'Baja (1 evento)'
-        ELSE 'Frecuente (2+ eventos)'
-    END AS banda_actividad
-FROM cuentas_activas_consolidadas cac
-INNER JOIN core.customers c 
-    ON cac.customer_id = c.customer_id
-ORDER BY 
-    cac.account_number;
+SELECT c.first_name, c.last_name, am.account_number, am.currency,
+       am.tx_count, am.gross_volume,
+       CASE WHEN am.tx_count = 0 THEN 'SIN MOVIMIENTOS' ELSE 'CON MOVIMIENTOS' END AS activity_band
+FROM account_metrics am JOIN core.customers c USING (customer_id)
+ORDER BY am.account_number;
+SELECT (SELECT COUNT(*) FROM core.accounts WHERE is_active) AS active_accounts,
+       (SELECT COALESCE(SUM(amount),0) FROM core.transactions) AS direct_gross_volume;
